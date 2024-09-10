@@ -31,6 +31,12 @@ func main() {
 	aliasFilePath := filepath.Join(homeDir, aliasFileName)
 	shellConfigPath := detectShellConfig(homeDir)
 
+	// Check if the "list" parameter is provided
+	if len(os.Args) > 1 && os.Args[1] == "list" {
+		listAliasesCli()
+		return
+	}
+
 	// Check installation and install if not already installed
 	if !isAliasmanInstalled(aliasFilePath, shellConfigPath) {
 		installAliasman(aliasFilePath, shellConfigPath)
@@ -70,8 +76,9 @@ func createMainMenu(app *tview.Application, pages *tview.Pages, aliasFilePath, s
 }
 
 func showReloadInstructions(shellConfigPath string) {
-	reloadCommand := fmt.Sprintf("source %s", shellConfigPath)
-	fmt.Printf("\nTo reload your aliases in the current shell, run this command:\n\n%s\n\n", reloadCommand)
+	fmt.Printf("\nTo reload your aliases in the current shell, you can either:\n")
+	fmt.Printf("1. Run the command: source %s\n", shellConfigPath)
+	fmt.Printf("2. Or simply use the alias: aliasman-reload\n\n")
 }
 
 func showAliasManagement(app *tview.Application, pages *tview.Pages, aliasFilePath string) {
@@ -218,7 +225,8 @@ func isAliasmanInstalled(aliasFilePath, shellConfigPath string) bool {
 
 func installAliasman(aliasFilePath, shellConfigPath string) {
 	// Create alias file
-	if err := os.WriteFile(aliasFilePath, []byte("# Aliasman managed aliases\n"), 0644); err != nil {
+	initialContent := "# Aliasman managed aliases\n\n# Reload aliases\nalias aliasman-reload='source " + aliasFilePath + "'\n"
+	if err := os.WriteFile(aliasFilePath, []byte(initialContent), 0644); err != nil {
 		fmt.Println("Error creating alias file:", err)
 		return
 	}
@@ -408,7 +416,7 @@ func generateAIAssistedAlias(app *tview.Application, pages *tview.Pages, aliasFi
 }
 
 func extractAliasFromOutput(output string) string {
-	re := regexp.MustCompile("```(?:bash)?\n(alias .+?='.+')\n```")
+	re := regexp.MustCompile("(?s).*```(?:bash)?\n(alias .+?='.+')\n```.*")
 	matches := re.FindStringSubmatch(output)
 	if len(matches) > 1 {
 		return matches[1]
@@ -465,4 +473,47 @@ func showAliasConfirmation(app *tview.Application, pages *tview.Pages, aliasFile
 
 	pages.AddPage("aliasConfirmation", modal, false, true)
 	pages.SwitchToPage("aliasConfirmation")
+}
+
+func listAliasesCli() {
+	aliases, err := loadAliases()
+	if err != nil {
+		fmt.Println("Error loading aliases:", err)
+		return
+	}
+
+	fmt.Println("Available aliases:")
+	for alias, command := range aliases {
+		fmt.Printf("%s: %s\n", alias, command)
+	}
+}
+
+func loadAliases() (map[string]string, error) {
+	homeDir, err := os.UserHomeDir()
+	if err != nil {
+		return nil, fmt.Errorf("error getting home directory: %w", err)
+	}
+
+	aliasFilePath := filepath.Join(homeDir, aliasFileName)
+	content, err := os.ReadFile(aliasFilePath)
+	if err != nil {
+		return nil, fmt.Errorf("error reading alias file: %w", err)
+	}
+
+	aliases := make(map[string]string)
+	lines := strings.Split(string(content), "\n")
+
+	for _, line := range lines {
+		line = strings.TrimSpace(line)
+		if strings.HasPrefix(line, "alias ") {
+			parts := strings.SplitN(line[6:], "=", 2)
+			if len(parts) == 2 {
+				name := strings.TrimSpace(parts[0])
+				command := strings.Trim(strings.TrimSpace(parts[1]), "'\"")
+				aliases[name] = command
+			}
+		}
+	}
+
+	return aliases, nil
 }
