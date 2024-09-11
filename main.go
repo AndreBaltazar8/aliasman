@@ -115,12 +115,14 @@ func listAliases(app *tview.Application, pages *tview.Pages, aliasFilePath strin
 		SetSelectable(true, false).
 		SetSeparator(tview.Borders.Vertical)
 
-	table.SetCell(0, 0, tview.NewTableCell("Alias").SetTextColor(tcell.ColorYellow).SetSelectable(false).SetAlign(tview.AlignCenter))
-	table.SetCell(0, 1, tview.NewTableCell("Command").SetTextColor(tcell.ColorYellow).SetSelectable(false).SetAlign(tview.AlignCenter))
+	table.SetCell(0, 0, tview.NewTableCell("Type").SetTextColor(tcell.ColorYellow).SetSelectable(false).SetAlign(tview.AlignCenter))
+	table.SetCell(0, 1, tview.NewTableCell("Name").SetTextColor(tcell.ColorYellow).SetSelectable(false).SetAlign(tview.AlignCenter))
+	table.SetCell(0, 2, tview.NewTableCell("Command").SetTextColor(tcell.ColorYellow).SetSelectable(false).SetAlign(tview.AlignCenter))
 
 	for i, alias := range aliases {
-		table.SetCell(i+1, 0, tview.NewTableCell(alias.Name).SetTextColor(tcell.ColorWhite).SetAlign(tview.AlignLeft))
-		table.SetCell(i+1, 1, tview.NewTableCell(alias.Command).SetTextColor(tcell.ColorWhite).SetAlign(tview.AlignLeft))
+		table.SetCell(i+1, 0, tview.NewTableCell(alias.Type).SetTextColor(tcell.ColorWhite).SetAlign(tview.AlignLeft))
+		table.SetCell(i+1, 1, tview.NewTableCell(alias.Name).SetTextColor(tcell.ColorWhite).SetAlign(tview.AlignLeft))
+		table.SetCell(i+1, 2, tview.NewTableCell(alias.Command).SetTextColor(tcell.ColorWhite).SetAlign(tview.AlignLeft))
 	}
 
 	table.Select(1, 0).SetFixed(1, 0).SetDoneFunc(func(key tcell.Key) {
@@ -253,20 +255,22 @@ alias aliasman-reload='source ` + aliasFilePath + `'
 
 func addAlias(app *tview.Application, pages *tview.Pages, aliasFilePath string) {
 	form := tview.NewForm()
-	form.AddInputField("Alias Name", "", 20, nil, nil)
+	form.AddInputField("Name", "", 20, nil, nil)
 	form.AddInputField("Command", "", 50, nil, nil)
+	form.AddDropDown("Type", []string{"alias", "function"}, 0, nil)
 	form.AddButton("Save", func() {
-		aliasName := form.GetFormItem(0).(*tview.InputField).GetText()
+		name := form.GetFormItem(0).(*tview.InputField).GetText()
 		command := form.GetFormItem(1).(*tview.InputField).GetText()
+		_, aliasType := form.GetFormItem(2).(*tview.DropDown).GetCurrentOption()
 
-		if aliasName == "" || command == "" {
+		if name == "" || command == "" {
 			showErrorModal(app, pages, "Both fields are required")
 			return
 		}
 
-		err := appendAlias(aliasFilePath, aliasName, command)
+		err := appendAlias(aliasFilePath, name, command, aliasType)
 		if err != nil {
-			showErrorModal(app, pages, "Error adding alias: "+err.Error())
+			showErrorModal(app, pages, "Error adding alias/function: "+err.Error())
 		} else {
 			pages.SwitchToPage("aliasManagement")
 		}
@@ -275,7 +279,7 @@ func addAlias(app *tview.Application, pages *tview.Pages, aliasFilePath string) 
 			pages.SwitchToPage("aliasManagement")
 		})
 
-	form.SetBorder(true).SetTitle("Add Alias").SetTitleAlign(tview.AlignCenter)
+	form.SetBorder(true).SetTitle("Add Alias/Function").SetTitleAlign(tview.AlignCenter)
 	form.SetButtonsAlign(tview.AlignCenter)
 
 	pages.AddPage("addAlias", form, true, true)
@@ -306,6 +310,7 @@ func showErrorModal(app *tview.Application, pages *tview.Pages, message string) 
 type Alias struct {
 	Name    string
 	Command string
+	Type    string // "alias" or "function"
 }
 
 func readAliases(aliasFilePath string) ([]Alias, error) {
@@ -316,6 +321,8 @@ func readAliases(aliasFilePath string) ([]Alias, error) {
 
 	lines := strings.Split(string(content), "\n")
 	aliases := []Alias{}
+	inFunction := false
+	currentFunction := Alias{}
 
 	for _, line := range lines {
 		if strings.HasPrefix(line, "alias ") {
@@ -323,7 +330,18 @@ func readAliases(aliasFilePath string) ([]Alias, error) {
 			if len(parts) == 2 {
 				name := strings.TrimSpace(parts[0])
 				command := strings.Trim(strings.TrimSpace(parts[1]), "'\"")
-				aliases = append(aliases, Alias{Name: name, Command: command})
+				aliases = append(aliases, Alias{Name: name, Command: command, Type: "alias"})
+			}
+		} else if strings.HasPrefix(line, "function ") || strings.HasSuffix(line, "() {") {
+			inFunction = true
+			name := strings.TrimSpace(strings.TrimSuffix(strings.TrimPrefix(line, "function "), "() {"))
+			currentFunction = Alias{Name: name, Command: "", Type: "function"}
+		} else if inFunction {
+			if line == "}" {
+				inFunction = false
+				aliases = append(aliases, currentFunction)
+			} else {
+				currentFunction.Command += line + "\n"
 			}
 		}
 	}
@@ -331,14 +349,19 @@ func readAliases(aliasFilePath string) ([]Alias, error) {
 	return aliases, nil
 }
 
-func appendAlias(aliasFilePath, name, command string) error {
+func appendAlias(aliasFilePath string, name, command, aliasType string) error {
 	f, err := os.OpenFile(aliasFilePath, os.O_APPEND|os.O_WRONLY, 0644)
 	if err != nil {
 		return err
 	}
 	defer f.Close()
 
-	aliasLine := fmt.Sprintf("alias %s='%s'\n", name, command)
+	var aliasLine string
+	if aliasType == "alias" {
+		aliasLine = fmt.Sprintf("alias %s='%s'\n", name, command)
+	} else {
+		aliasLine = fmt.Sprintf("function %s() {\n%s\n}\n", name, command)
+	}
 	_, err = f.WriteString(aliasLine)
 	return err
 }
@@ -379,24 +402,127 @@ func showAIAssistedAliasCreation(app *tview.Application, pages *tview.Pages, ali
 	}
 
 	form := tview.NewForm()
-	form.AddInputField("Describe the alias you want to create", "", 50, nil, nil)
+	form.AddDropDown("Type", []string{"Alias", "Function"}, 0, nil)
+	form.AddInputField("Description", "", 50, nil, nil)
 	form.AddButton("Generate", func() {
-		description := form.GetFormItem(0).(*tview.InputField).GetText()
+		_, typeStr := form.GetFormItem(0).(*tview.DropDown).GetCurrentOption()
+		description := form.GetFormItem(1).(*tview.InputField).GetText()
 		if description == "" {
-			showErrorModal(app, pages, "Please enter a description for the alias.")
+			showErrorModal(app, pages, "Please enter a description.")
 			return
 		}
-		generateAIAssistedAlias(app, pages, aliasFilePath, description)
+		generateAIAssistedAliasOrFunction(app, pages, aliasFilePath, typeStr, description)
 	}).
 		AddButton("Cancel", func() {
 			pages.SwitchToPage("main")
 		})
 
-	form.SetBorder(true).SetTitle("AI Assisted Alias Creation").SetTitleAlign(tview.AlignCenter)
+	form.SetBorder(true).SetTitle("AI Assisted Alias/Function Creation").SetTitleAlign(tview.AlignCenter)
 	form.SetButtonsAlign(tview.AlignCenter)
 
-	pages.AddPage("aiAssistedAlias", form, true, true)
-	pages.SwitchToPage("aiAssistedAlias")
+	pages.AddPage("aiAssistedCreation", form, true, true)
+	pages.SwitchToPage("aiAssistedCreation")
+}
+
+func generateAIAssistedAliasOrFunction(app *tview.Application, pages *tview.Pages, aliasFilePath, typeStr, description string) {
+	config, err := readConfig(aliasFilePath)
+	if err != nil {
+		showErrorModal(app, pages, fmt.Sprintf("Error reading configuration: %v", err))
+		return
+	}
+
+	var prompt string
+	if typeStr == "Alias" {
+		prompt = fmt.Sprintf("generate alias for %s, output just the command, as a bash command alias, inside a code block", description)
+	} else {
+		prompt = fmt.Sprintf("generate function for %s, output just the function, as a bash function (with function prefix), inside a code block", description)
+	}
+
+	cmd := exec.Command("llm", "-m", config.Model, prompt)
+	output, err := cmd.CombinedOutput()
+	if err != nil {
+		showErrorModal(app, pages, fmt.Sprintf("Error generating %s: %v", strings.ToLower(typeStr), err))
+		return
+	}
+
+	result := extractAliasOrFunctionFromOutput(string(output))
+	if result == "" {
+		showAIOutput(app, pages, string(output))
+		return
+	}
+
+	showAliasOrFunctionConfirmation(app, pages, aliasFilePath, result)
+}
+
+func extractAliasOrFunctionFromOutput(output string) string {
+	re := regexp.MustCompile("(?s).*```(?:bash)?\n((?:alias .+?='.+')|(?:function .+? \\{[\\s\\S]+?\\}))\n```.*")
+	matches := re.FindStringSubmatch(output)
+	if len(matches) > 1 {
+		return matches[1]
+	}
+	return ""
+}
+
+func showAliasOrFunctionConfirmation(app *tview.Application, pages *tview.Pages, aliasFilePath, result string) {
+	isFunction := strings.HasPrefix(result, "function")
+	typeStr := "alias"
+	if isFunction {
+		typeStr = "function"
+	}
+
+	modal := tview.NewModal().
+		SetText(fmt.Sprintf("Do you want to add this %s?\n\n%s", typeStr, result)).
+		AddButtons([]string{"Add", "Cancel"}).
+		SetDoneFunc(func(buttonIndex int, buttonLabel string) {
+			if buttonLabel == "Add" {
+				var name, command string
+				if isFunction {
+					parts := strings.SplitN(result, "{", 2)
+					name = strings.TrimSpace(strings.TrimPrefix(parts[0], "function"))
+					name = strings.TrimSuffix(name, "()")
+					command = "{" + parts[1]
+				} else {
+					parts := strings.SplitN(result, "=", 2)
+					name = strings.TrimPrefix(strings.TrimSpace(parts[0]), "alias ")
+					command = strings.Trim(strings.TrimSpace(parts[1]), "'")
+				}
+
+				err := appendAlias(aliasFilePath, name, command, typeStr)
+				if err != nil {
+					showErrorModal(app, pages, fmt.Sprintf("Error adding %s: %v", typeStr, err))
+				} else {
+					pages.SwitchToPage("main")
+				}
+			} else {
+				pages.SwitchToPage("aiAssistedCreation")
+			}
+		})
+
+	pages.AddPage("aliasOrFunctionConfirmation", modal, false, true)
+	pages.SwitchToPage("aliasOrFunctionConfirmation")
+}
+
+func showAIOutput(app *tview.Application, pages *tview.Pages, output string) {
+	textView := tview.NewTextView().
+		SetText(output).
+		SetScrollable(true).
+		SetDynamicColors(true)
+
+	frame := tview.NewFrame(textView).
+		SetBorders(0, 0, 0, 0, 0, 0).
+		AddText("AI Output (Press 'q' to go back)", true, tview.AlignCenter, tcell.ColorYellow)
+
+	pages.AddPage("aiOutput", frame, true, true)
+	pages.SwitchToPage("aiOutput")
+
+	app.SetInputCapture(func(event *tcell.EventKey) *tcell.EventKey {
+		if event.Key() == tcell.KeyRune && (event.Rune() == 'q' || event.Rune() == 'Q') {
+			pages.SwitchToPage("aiAssistedCreation")
+			app.SetInputCapture(nil)
+			return nil
+		}
+		return event
+	})
 }
 
 func isLLMAvailable() bool {
@@ -428,116 +554,42 @@ func readConfig(aliasFilePath string) (Config, error) {
 	return Config{Model: "llama3:8b"}, nil // Default model if not found
 }
 
-func generateAIAssistedAlias(app *tview.Application, pages *tview.Pages, aliasFilePath, description string) {
-	config, err := readConfig(aliasFilePath)
-	if err != nil {
-		showErrorModal(app, pages, fmt.Sprintf("Error reading configuration: %v", err))
-		return
-	}
-
-	cmd := exec.Command("llm", "-m", config.Model, fmt.Sprintf("generate alias for %s, output just the command, as a bash command alias, inside a code block", description))
-	output, err := cmd.CombinedOutput()
-	if err != nil {
-		showErrorModal(app, pages, fmt.Sprintf("Error generating alias: %v", err))
-		return
-	}
-
-	alias := extractAliasFromOutput(string(output))
-	if alias == "" {
-		showAIOutput(app, pages, string(output))
-		return
-	}
-
-	showAliasConfirmation(app, pages, aliasFilePath, alias)
-}
-
-func extractAliasFromOutput(output string) string {
-	re := regexp.MustCompile("(?s).*```(?:bash)?\n(alias .+?='.+')\n```.*")
-	matches := re.FindStringSubmatch(output)
-	if len(matches) > 1 {
-		return matches[1]
-	}
-	return ""
-}
-
-func showAIOutput(app *tview.Application, pages *tview.Pages, output string) {
-	textView := tview.NewTextView().
-		SetText(output).
-		SetScrollable(true).
-		SetDynamicColors(true)
-
-	frame := tview.NewFrame(textView).
-		SetBorders(0, 0, 0, 0, 0, 0).
-		AddText("AI Output (Press 'q' to go back)", true, tview.AlignCenter, tcell.ColorYellow)
-
-	pages.AddPage("aiOutput", frame, true, true)
-	pages.SwitchToPage("aiOutput")
-
-	app.SetInputCapture(func(event *tcell.EventKey) *tcell.EventKey {
-		if event.Key() == tcell.KeyRune && (event.Rune() == 'q' || event.Rune() == 'Q') {
-			pages.SwitchToPage("aiAssistedAlias")
-			app.SetInputCapture(nil)
-			return nil
-		}
-		return event
-	})
-}
-
-func showAliasConfirmation(app *tview.Application, pages *tview.Pages, aliasFilePath, alias string) {
-	modal := tview.NewModal().
-		SetText(fmt.Sprintf("Do you want to add this alias?\n\n%s", alias)).
-		AddButtons([]string{"Add", "Cancel"}).
-		SetDoneFunc(func(buttonIndex int, buttonLabel string) {
-			if buttonLabel == "Add" {
-				parts := strings.SplitN(alias, "=", 2)
-				if len(parts) == 2 {
-					name := strings.TrimPrefix(strings.TrimSpace(parts[0]), "alias ")
-					command := strings.Trim(strings.TrimSpace(parts[1]), "'")
-					err := appendAlias(aliasFilePath, name, command)
-					if err != nil {
-						showErrorModal(app, pages, "Error adding alias: "+err.Error())
-					} else {
-						pages.SwitchToPage("main")
-					}
-				} else {
-					showErrorModal(app, pages, "Invalid alias format")
-				}
-			} else {
-				pages.SwitchToPage("aiAssistedAlias")
-			}
-		})
-
-	pages.AddPage("aliasConfirmation", modal, false, true)
-	pages.SwitchToPage("aliasConfirmation")
-}
-
 func listAliasesCli() {
-	aliases, err := loadAliases()
+	aliases, functions, err := loadAliasesAndFunctions()
 	if err != nil {
-		fmt.Println("Error loading aliases:", err)
+		fmt.Println("Error loading aliases and functions:", err)
 		return
 	}
 
 	fmt.Println("Available aliases:")
-	for alias, command := range aliases {
-		fmt.Printf("%s: %s\n", alias, command)
+	for name, command := range aliases {
+		fmt.Printf("  %s: %s\n", name, command)
+	}
+
+	fmt.Println("\nAvailable functions:")
+	for name := range functions {
+		fmt.Printf("  %s\n", name)
 	}
 }
 
-func loadAliases() (map[string]string, error) {
+func loadAliasesAndFunctions() (map[string]string, map[string]bool, error) {
 	homeDir, err := os.UserHomeDir()
 	if err != nil {
-		return nil, fmt.Errorf("error getting home directory: %w", err)
+		return nil, nil, fmt.Errorf("error getting home directory: %w", err)
 	}
 
 	aliasFilePath := filepath.Join(homeDir, aliasFileName)
 	content, err := os.ReadFile(aliasFilePath)
 	if err != nil {
-		return nil, fmt.Errorf("error reading alias file: %w", err)
+		return nil, nil, fmt.Errorf("error reading alias file: %w", err)
 	}
 
 	aliases := make(map[string]string)
+	functions := make(map[string]bool)
 	lines := strings.Split(string(content), "\n")
+
+	inFunction := false
+	currentFunction := ""
 
 	for _, line := range lines {
 		line = strings.TrimSpace(line)
@@ -548,10 +600,17 @@ func loadAliases() (map[string]string, error) {
 				command := strings.Trim(strings.TrimSpace(parts[1]), "'\"")
 				aliases[name] = command
 			}
+		} else if strings.HasPrefix(line, "function ") || strings.HasSuffix(line, "() {") {
+			inFunction = true
+			currentFunction = strings.TrimSpace(strings.TrimSuffix(strings.TrimPrefix(line, "function "), "() {"))
+			functions[currentFunction] = true
+		} else if line == "}" && inFunction {
+			inFunction = false
+			currentFunction = ""
 		}
 	}
 
-	return aliases, nil
+	return aliases, functions, nil
 }
 
 func showSettings(app *tview.Application, pages *tview.Pages, aliasFilePath, shellConfigPath string) {

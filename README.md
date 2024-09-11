@@ -8,8 +8,8 @@ Aliasman is a powerful Terminal User Interface (TUI) application for managing Ba
 ## Features
 
 - 🚀 Easy installation and setup
-- 📋 List, add, and delete aliases
-- 🤖 AI-assisted alias creation
+- 📋 List, add, and delete aliases and bash functions
+- 🤖 AI-assisted alias and function creation
 - ⚙️ Configurable LLM model for AI assistance
 - 🖥️ Cross-shell compatibility (Bash, Zsh)
 - 🎨 User-friendly TUI powered by tview
@@ -57,12 +57,12 @@ go install github.com/AndreBaltazar8/aliasman@latest
 
 1. Launch Aliasman by running `aliasman` in your terminal.
 2. Use the arrow keys to navigate the menu and Enter to select an option.
-3. Follow the on-screen prompts to manage your aliases.
+3. Follow the on-screen prompts to manage your aliases and bash functions.
 
 ### Main Menu Options
 
-- **Manage Aliases**: Add, remove, or list aliases
-- **AI Assisted Alias Creation**: Create aliases with AI help
+- **Manage Aliases and Functions**: Add, remove, or list aliases and bash functions
+- **AI Assisted Creation**: Create aliases or functions with AI help
 - **Settings**: Configure Aliasman and check installation
 - **Quit**: Exit the application
 
@@ -76,7 +76,7 @@ aliasman list
 
 ## Configuration
 
-Aliasman stores its configuration and aliases in `~/.aliasman_aliases`. You can manually edit this file, but it's recommended to use the TUI for management.
+Aliasman stores its configuration, aliases, and functions in `~/.aliasman_aliases`. You can manually edit this file, but it's recommended to use the TUI for management.
 
 To change the LLM model used for AI-assisted alias creation, use the "Change LLM Model" option in the Settings menu.
 
