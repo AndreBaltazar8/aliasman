@@ -1,6 +1,7 @@
 # Aliasman
 
-![Aliasman Logo](path/to/logo.png)
+> [!NOTE]
+> This project was entirely created using AI as part of a 30 Cursor AI projects in 30 days challenge. For more information, check out [this Twitter thread](https://x.com/AndreBaltazar/status/1833626208296210674).
 
 Aliasman is a powerful Terminal User Interface (TUI) application for managing Bash aliases with ease. It simplifies the process of creating, listing, and deleting aliases, and even offers AI-assisted alias creation.
 
