@@ -1,4 +1,4 @@
-module aliasman
+module github.com/AndreBaltazar8/aliasman
 
 go 1.21.5
 

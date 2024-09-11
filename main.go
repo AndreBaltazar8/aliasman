@@ -1,6 +1,7 @@
 package main
 
 import (
+	"encoding/json"
 	"fmt"
 	"os"
 	"os/exec"
@@ -54,8 +55,8 @@ func main() {
 func createMainMenu(app *tview.Application, pages *tview.Pages, aliasFilePath, shellConfigPath string) *tview.List {
 	mainMenu := tview.NewList().
 		AddItem("Manage Aliases", "Add, remove, or list aliases", 'm', nil).
-		AddItem("Check Installation", "Check if aliasman is installed", 'c', nil).
 		AddItem("AI Assisted Alias Creation", "Create an alias using AI assistance", 'a', nil).
+		AddItem("Settings", "Configure Aliasman settings", 's', nil).
 		AddItem("Quit", "Exit the application", 'q', func() {
 			app.Stop()
 			showReloadInstructions(shellConfigPath)
@@ -66,9 +67,9 @@ func createMainMenu(app *tview.Application, pages *tview.Pages, aliasFilePath, s
 		case 0:
 			showAliasManagement(app, pages, aliasFilePath)
 		case 1:
-			checkInstallation(app, pages, aliasFilePath, shellConfigPath)
-		case 2:
 			showAIAssistedAliasCreation(app, pages, aliasFilePath)
+		case 2:
+			showSettings(app, pages, aliasFilePath, shellConfigPath)
 		}
 	})
 
@@ -224,8 +225,13 @@ func isAliasmanInstalled(aliasFilePath, shellConfigPath string) bool {
 }
 
 func installAliasman(aliasFilePath, shellConfigPath string) {
-	// Create alias file
-	initialContent := "# Aliasman managed aliases\n\n# Reload aliases\nalias aliasman-reload='source " + aliasFilePath + "'\n"
+	// Create alias file with configuration
+	initialContent := `# { "model": "llama3:8b" }
+# Aliasman managed aliases
+
+# Reload aliases
+alias aliasman-reload='source ` + aliasFilePath + `'
+`
 	if err := os.WriteFile(aliasFilePath, []byte(initialContent), 0644); err != nil {
 		fmt.Println("Error creating alias file:", err)
 		return
@@ -368,7 +374,7 @@ func detectShellConfig(homeDir string) string {
 
 func showAIAssistedAliasCreation(app *tview.Application, pages *tview.Pages, aliasFilePath string) {
 	if !isLLMAvailable() {
-		showErrorModal(app, pages, "The 'llm' command is not available on your system.")
+		showErrorModal(app, pages, "The 'llm' command is not available on your system. Install it: https://llm.datasette.io/en/stable/")
 		return
 	}
 
@@ -398,8 +404,38 @@ func isLLMAvailable() bool {
 	return cmd.Run() == nil
 }
 
+type Config struct {
+	Model string `json:"model"`
+}
+
+func readConfig(aliasFilePath string) (Config, error) {
+	content, err := os.ReadFile(aliasFilePath)
+	if err != nil {
+		return Config{}, err
+	}
+
+	lines := strings.Split(string(content), "\n")
+	for _, line := range lines {
+		if strings.HasPrefix(line, "# {") && strings.HasSuffix(line, "}") {
+			var config Config
+			err := json.Unmarshal([]byte(line[2:]), &config)
+			if err == nil {
+				return config, nil
+			}
+		}
+	}
+
+	return Config{Model: "llama3:8b"}, nil // Default model if not found
+}
+
 func generateAIAssistedAlias(app *tview.Application, pages *tview.Pages, aliasFilePath, description string) {
-	cmd := exec.Command("llm", "-m", "llama3:8b", fmt.Sprintf("generate alias for %s, output just the command, as a bash command alias, inside a code block", description))
+	config, err := readConfig(aliasFilePath)
+	if err != nil {
+		showErrorModal(app, pages, fmt.Sprintf("Error reading configuration: %v", err))
+		return
+	}
+
+	cmd := exec.Command("llm", "-m", config.Model, fmt.Sprintf("generate alias for %s, output just the command, as a bash command alias, inside a code block", description))
 	output, err := cmd.CombinedOutput()
 	if err != nil {
 		showErrorModal(app, pages, fmt.Sprintf("Error generating alias: %v", err))
@@ -516,4 +552,121 @@ func loadAliases() (map[string]string, error) {
 	}
 
 	return aliases, nil
+}
+
+func showSettings(app *tview.Application, pages *tview.Pages, aliasFilePath, shellConfigPath string) {
+	list := tview.NewList().
+		AddItem("Check Installation", "Check if Aliasman is installed", 'c', nil).
+		AddItem("Change LLM Model", "Modify the AI model used for alias generation", 'm', nil).
+		AddItem("Back", "Return to main menu", 'q', nil)
+
+	list.SetSelectedFunc(func(index int, _ string, _ string, _ rune) {
+		switch index {
+		case 0:
+			checkInstallation(app, pages, aliasFilePath, shellConfigPath)
+		case 1:
+			changeLLMModel(app, pages, aliasFilePath)
+		case 2:
+			pages.SwitchToPage("main")
+		}
+	})
+
+	pages.AddPage("settings", list, true, true)
+	pages.SwitchToPage("settings")
+}
+
+func changeLLMModel(app *tview.Application, pages *tview.Pages, aliasFilePath string) {
+	config, err := readConfig(aliasFilePath)
+	if err != nil {
+		showErrorModal(app, pages, fmt.Sprintf("Error reading configuration: %v", err))
+		return
+	}
+
+	// Run "llm models" command
+	cmd := exec.Command("llm", "models")
+	output, err := cmd.CombinedOutput()
+	if err != nil {
+		showErrorModal(app, pages, fmt.Sprintf("Error getting available models: %v", err))
+		return
+	}
+
+	// Create a flex layout
+	flex := tview.NewFlex().SetDirection(tview.FlexRow)
+	flex.SetBackgroundColor(tcell.ColorBlack)
+
+	// Add a text view for the model list
+	modelList := tview.NewTextView().
+		SetDynamicColors(true).
+		SetRegions(true).
+		SetScrollable(true).
+		SetText(string(output))
+
+	flex.AddItem(tview.NewTextView().SetText("Available Models (scrollable)").SetTextAlign(tview.AlignCenter), 1, 1, false)
+	flex.AddItem(modelList, 0, 1, false)
+
+	// Add a form for changing the model
+	form := tview.NewForm()
+	form.AddInputField("LLM Model", config.Model, 30, nil, nil)
+	form.AddButton("Save", func() {
+		newModel := form.GetFormItem(0).(*tview.InputField).GetText()
+		if newModel == "" {
+			showErrorModal(app, pages, "Model name cannot be empty")
+			return
+		}
+
+		config.Model = newModel
+		err := updateConfig(aliasFilePath, config)
+		if err != nil {
+			showErrorModal(app, pages, fmt.Sprintf("Error updating configuration: %v", err))
+		} else {
+			pages.SwitchToPage("settings")
+		}
+	})
+	form.AddButton("Cancel", func() {
+		pages.SwitchToPage("settings")
+	})
+
+	flex.AddItem(form, 0, 1, true)
+
+	// Create a frame to hold the flex layout
+	frame := tview.NewFrame(flex).SetBorders(0, 0, 0, 0, 0, 0)
+	frame.AddText("Change LLM Model", true, tview.AlignCenter, tcell.ColorYellow)
+
+	pages.AddPage("changeLLMModel", frame, true, true)
+	pages.SwitchToPage("changeLLMModel")
+
+	// Set input capture for the entire page
+	app.SetInputCapture(func(event *tcell.EventKey) *tcell.EventKey {
+		if event.Key() == tcell.KeyEscape {
+			pages.SwitchToPage("settings")
+			app.SetInputCapture(nil)
+			return nil
+		}
+		return event
+	})
+}
+
+func updateConfig(aliasFilePath string, config Config) error {
+	content, err := os.ReadFile(aliasFilePath)
+	if err != nil {
+		return err
+	}
+
+	lines := strings.Split(string(content), "\n")
+	configJSON, err := json.Marshal(config)
+	if err != nil {
+		return err
+	}
+
+	newConfigLine := fmt.Sprintf("# %s", string(configJSON))
+	updatedLines := []string{newConfigLine}
+
+	for i, line := range lines {
+		if i == 0 && strings.HasPrefix(line, "# {") && strings.HasSuffix(line, "}") {
+			continue
+		}
+		updatedLines = append(updatedLines, line)
+	}
+
+	return os.WriteFile(aliasFilePath, []byte(strings.Join(updatedLines, "\n")), 0644)
 }
